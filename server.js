@@ -18,7 +18,7 @@ let tasks = [
 app.get('/', (req, res) => {
   res.json({
     name: "Task API",
-    version: "2.0",
+    version: "3.0",
     endpoints: ["/tasks", "/health"]
   });
 });
@@ -37,10 +37,7 @@ app.get('/tasks', (req, res) => {
 // 2. GET /tasks/:id - Read single task by Path Parameter ID
 // Sysadmin Analogy: Searching Windows Event Viewer for a specific Record ID (Get-WinEvent -InstanceId)
 app.get('/tasks/:id', (req, res) => {
-  // Parse string path parameter from URL into integer
   const taskId = parseInt(req.params.id, 10);
-
-  // Search in-memory array for matching primary key ID
   const task = tasks.find(t => t.id === taskId);
 
   // Firewall / Validation Gate: Return 404 if record does not exist
@@ -48,8 +45,36 @@ app.get('/tasks/:id', (req, res) => {
     return res.status(404).json({ error: `Task ${taskId} not found` });
   }
 
-  // Return matching task record with 200 OK status
   res.status(200).json(task);
+});
+
+// 3. POST /tasks - Create a new task record with payload validation
+// Sysadmin Analogy: Service Intake Form Verification & Dynamic Primary Key Allocation
+app.post('/tasks', (req, res) => {
+  const { title } = req.body;
+
+  // Validation Gate / Input Firewall (Rule 1: Never trust incoming client data)
+  // Rejects requests with missing, non-string, or blank titles with HTTP 400 Bad Request
+  if (!title || typeof title !== 'string' || title.trim() === '') {
+    return res.status(400).json({ error: "Title is required and must be a non-empty string" });
+  }
+
+  // Primary Key Allocation (DHCP Lease / Auto-Increment Analogy)
+  // Calculates the next available free integer ID safely
+  const nextId = tasks.length > 0 ? Math.max(...tasks.map(t => t.id)) + 1 : 1;
+
+  // Construct official record object (Defaulting 'done' status to false)
+  const newTask = {
+    id: nextId,
+    title: title.trim(),
+    done: false
+  };
+
+  // Commit record to in-memory database cache
+  tasks.push(newTask);
+
+  // Return HTTP 201 Created ("Official receipt confirming record creation")
+  res.status(201).json(newTask);
 });
 
 // Bind HTTP server daemon listener to TCP port 3000
