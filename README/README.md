@@ -67,3 +67,37 @@ Connection: keep-alive
     "done": false
   }
 ]
+```
+##📸 4. Interactive Swagger UI Documentation
+
+This API serves an interactive OpenAPI 3.0 specification rendered live via Swagger UI at /docs/.
+
+To test endpoints interactively:
+
+1. Ensure the daemon is running (node server.js).
+
+2. Open http://localhost:3000/docs/ in your browser.
+
+3. Click any route panel and press Try it out to execute real HTTP requests directly against your local server.
+
+##🛠️ Tech Stack & Architecture
+
+* Runtime: Node.js
+
+* Framework: Express.js
+
+* API Blueprint: OpenAPI 3.0 (openapi.json)
+
+* Interactive UI: swagger-ui-express
+
+* Version Control: Git & GitHub
+
+##👤 Author
+
+Ernest Mwang'ombe
+
+* Role: IT Consultant & Backend AI Engineer
+
+* Track: FlyRank Internship Backend Engineering
+
+* GitHub: @ernestmwangombe
