@@ -1,0 +1,65 @@
+{
+"openapi": "3.0.0",
+"info": {
+"title": "Task Management API",
+"description": "Full CRUD API for managing system tasks.",
+"version": "4.0"
+},
+"servers": [
+{
+"url": "http://localhost:3000"
+}
+],
+"paths": {
+"/tasks": {
+"get": {
+"summary": "Retrieve all tasks",
+"responses": { "200": { "description": "List of tasks" } }
+},
+"post": {
+"summary": "Create a new task",
+"requestBody": {
+"content": {
+"application/json": {
+"schema": {
+"type": "object",
+"properties": { "title": { "type": "string" } }
+}
+}
+}
+},
+"responses": { "201": { "description": "Task created" } }
+}
+},
+"/tasks/{id}": {
+"get": {
+"summary": "Get task by ID",
+"parameters": [{ "name": "id", "in": "path", "required": true, "schema": { "type": "integer" } }],
+"responses": { "200": { "description": "Task details" }, "404": { "description": "Not found" } }
+},
+"put": {
+"summary": "Update task",
+"parameters": [{ "name": "id", "in": "path", "required": true, "schema": { "type": "integer" } }],
+"requestBody": {
+"content": {
+"application/json": {
+"schema": {
+"type": "object",
+"properties": {
+"title": { "type": "string" },
+"done": { "type": "boolean" }
+}
+}
+}
+}
+},
+"responses": { "200": { "description": "Task updated" } }
+},
+"delete": {
+"summary": "Delete task",
+"parameters": [{ "name": "id", "in": "path", "required": true, "schema": { "type": "integer" } }],
+"responses": { "204": { "description": "Task deleted" } }
+}
+}
+}
+}
