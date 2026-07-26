@@ -80,6 +80,9 @@ To test endpoints interactively:
 
 3. Click any route panel and press Try it out to execute real HTTP requests directly against your local server.
 
+   <img width="1919" height="956" alt="swagger-ui-screenshot" src="https://github.com/user-attachments/assets/e15c8b6e-4165-4b02-9370-c8c38b8b5cce" />
+
+
 ##🛠️ Tech Stack & Architecture
 
 * Runtime: Node.js
