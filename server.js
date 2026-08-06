@@ -28,6 +28,32 @@ app.get('/tasks', (req, res) => {
     }
 });
 
+// 2. POST /tasks - Insert new task record into SQLite
+app.post('/tasks', (req, res) => {
+    // Defensive Fallback: If Content-Type or body is omitted, req.body is undefined.
+    // Fallback to {} to prevent unhandled TypeError crashes.
+    const { title } = req.body || {};
+
+    if (!title || typeof title !== 'string' || title.trim() === "") {
+        return res.status(400).json({ error: "Title is required and must be a non-empty string" });
+    }
+
+    try {
+        const stmt = db.prepare('INSERT INTO tasks (title, done) VALUES (?, 0)');
+        const info = stmt.run(title.trim());
+
+        const newTask = {
+            id: info.lastInsertRowid,
+            title: title.trim(),
+            done: false
+        };
+
+        res.status(201).json(newTask);
+    } catch (error) {
+        res.status(500).json({ error: "Failed to insert task into database" });
+    }
+});
+
 // 3. GET /tasks/:id - Lookup single task by Primary Key ID
 app.get('/tasks/:id', (req, res) => {
     const taskId = parseInt(req.params.id, 10);
