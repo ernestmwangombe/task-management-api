@@ -1,0 +1,16 @@
+node_modules
+npm-debug.log*
+.git
+.gitignore
+.env
+.env.*
+!.env.example
+tasks.db
+tasks.db-shm
+tasks.db-wal
+*.md
+ScreenShots
+Dockerfile
+compose.yaml
+compose.dev.yaml
+.dockerignore
