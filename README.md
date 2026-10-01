@@ -1,9 +1,8 @@
 # Task Management API
 
-A containerized REST API for managing tasks, built with **Node.js, Express and PostgreSQL**. The whole stack (API plus database) starts with one command, keeps its data across restarts, and keeps credentials out of the code.
+A containerized REST API for managing tasks, built with **Node.js, Express and PostgreSQL**. The whole stack (API plus database) starts with one command and keeps its data across restarts.
 
 ```bash
-cp .env.example .env    # then set POSTGRES_PASSWORD
 docker compose up --build
 ```
 
@@ -18,8 +17,8 @@ It is a deliberately small service, built to show the engineering habits I bring
 | Clean REST design with correct status codes (`200`, `201`, `204`, `400`, `404`) | [API reference](#api-reference) |
 | Safe database access: every query is parameterized, so user input can never run as SQL | `index.js` |
 | Reproducible environments: one command brings up the API and its database on any machine | `compose.yaml`, `Dockerfile` |
-| Secrets management: credentials live in a git-ignored `.env`, never in the code or the image | [Configuration](#configuration) |
-| Startup reliability: the API waits for a healthy database and seeds data only once | [Design decisions](#design-decisions) |
+| Persistent storage: data survives a full stack restart through a named Docker volume | [Proving persistence](#proving-persistence) |
+| Idempotent startup: the table is created if missing and the seed data is inserted only once | `db.js` |
 | Migration experience: the same API moved from memory to SQLite to PostgreSQL without changing its contract | [How it evolved](#how-it-evolved) |
 
 ---
@@ -28,19 +27,18 @@ It is a deliberately small service, built to show the engineering habits I bring
 
 1. [Architecture](#architecture)
 2. [Quick start](#quick-start)
-3. [Configuration](#configuration)
-4. [API reference](#api-reference)
-5. [Try it with curl](#try-it-with-curl)
-6. [Proving persistence](#proving-persistence)
-7. [Looking inside the database](#looking-inside-the-database)
-8. [Swagger UI (SQLite version)](#swagger-ui-sqlite-version)
-9. [Running without Docker](#running-without-docker)
-10. [Project structure](#project-structure)
-11. [How it evolved](#how-it-evolved)
-12. [Design decisions](#design-decisions)
-13. [Current limitations](#current-limitations)
-14. [Roadmap: Supabase](#roadmap-supabase)
-15. [Security notes](#security-notes)
+3. [API reference](#api-reference)
+4. [Try it with curl](#try-it-with-curl)
+5. [Proving persistence](#proving-persistence)
+6. [Looking inside the database](#looking-inside-the-database)
+7. [Swagger UI (SQLite version)](#swagger-ui-sqlite-version)
+8. [Running the SQLite version without Docker](#running-the-sqlite-version-without-docker)
+9. [Project structure](#project-structure)
+10. [How it evolved](#how-it-evolved)
+11. [Design decisions](#design-decisions)
+12. [Current limitations](#current-limitations)
+13. [Roadmap](#roadmap)
+14. [Security notes](#security-notes)
 
 ---
 
@@ -48,14 +46,14 @@ It is a deliberately small service, built to show the engineering habits I bring
 
 ```mermaid
 flowchart LR
-    Client["Client<br/>(curl, Swagger, Hoppscotch)"] -->|"HTTP :3000"| API["api container<br/>Node.js + Express<br/>index.js"]
+    Client["Client<br/>(curl, Hoppscotch)"] -->|"HTTP :3000"| API["api container<br/>Node.js + Express<br/>index.js"]
     API -->|"pg connection pool<br/>db:5432"| DB[("db container<br/>PostgreSQL 16 Alpine")]
     DB --- Vol[["named volume<br/>taskdata"]]
 ```
 
-- **API container:** Express handles routing, input validation and status codes. Every database call is a parameterized query.
-- **Database container:** the official `postgres:16-alpine` image, with a health check so the API only starts once the database is ready.
-- **Network:** Docker Compose puts both containers on one private network. The API reaches the database by its service name (`db`), not `localhost`, and the database port is not published to your machine by default.
+- **API container:** Express handles routing, input validation and status codes. Every database call is a parameterized query. The image is built from `node:18-alpine`.
+- **Database container:** the official `postgres:16-alpine` image.
+- **Network:** Docker Compose puts both containers on one private network. The API reaches the database by its service name (`db`), not `localhost`, and the database port is not published to your machine.
 - **Persistence:** the named volume `taskdata` holds the Postgres data directory, so rows outlive the containers.
 
 ---
@@ -67,16 +65,10 @@ flowchart LR
 ```bash
 git clone https://github.com/ernestmwangombe/task-management-api.git
 cd task-management-api
-cp .env.example .env
-```
-
-On Windows PowerShell, use `Copy-Item .env.example .env` instead of `cp`.
-
-Open `.env` and replace `change_me` with a password of your own in **both** `POSTGRES_PASSWORD` and the `DATABASE_URL` line (the `DATABASE_URL` line is only used when you run outside Docker). Then start the stack:
-
-```bash
 docker compose up --build
 ```
+
+No `.env` file is needed for the Docker stack: `compose.yaml` passes the database settings to both containers directly. `.env.example` lists the variable names for reference.
 
 In a second terminal:
 
@@ -92,19 +84,7 @@ Stop the stack and keep your data:
 docker compose down
 ```
 
----
-
-## Configuration
-
-| Variable | Purpose | Default in `.env.example` |
-|----------|---------|---------------------------|
-| `PORT` | Port the API is published on | `3000` |
-| `POSTGRES_USER` | Database user | `postgres` |
-| `POSTGRES_PASSWORD` | Database password (**set your own**) | `change_me` |
-| `POSTGRES_DB` | Database name | `tasks` |
-| `DATABASE_URL` | Connection string, only for running the API outside Docker | `postgres://postgres:change_me@localhost:5432/tasks` |
-
-Docker Compose builds the API's connection string from the `POSTGRES_*` values, so the password is defined in exactly one place. `.env.example` is committed as a template. `.env` is git-ignored and excluded from the Docker image.
+**If the API exits on the very first start:** the database container can take a few seconds to accept connections the first time it initializes. The API will stop with a "database initialization failed" message. Start it again with `docker compose up` (or `docker compose restart api`) and it connects normally.
 
 ---
 
@@ -130,7 +110,7 @@ Base URL: `http://localhost:3000`
 }
 ```
 
-**Error shape** (every error is JSON, never an HTML stack trace)
+**Error shape**
 
 ```json
 { "error": "Task not found" }
@@ -142,6 +122,7 @@ Base URL: `http://localhost:3000`
 - `PUT /tasks/:id` requires a non-empty string `title`. If `done` is omitted it is stored as `false`, so send both fields when updating.
 - Titles are trimmed of leading and trailing whitespace before they are stored.
 - A successful `DELETE` returns `204` with no body.
+- Send requests with the header `Content-Type: application/json` and a JSON body. See [Current limitations](#current-limitations) for what happens when the body is missing entirely.
 
 ---
 
@@ -242,10 +223,10 @@ docker compose down -v
 
 ## Looking inside the database
 
-The API and `psql` read the same rows, so there is no syncing step. Open a SQL prompt inside the running database container:
+The API and `psql` read the same rows, so there is no syncing step. With the stack running, open a SQL prompt inside the database container:
 
 ```bash
-docker compose exec db sh -c 'psql -U "$POSTGRES_USER" -d "$POSTGRES_DB"'
+docker compose exec db psql -U postgres -d tasks
 ```
 
 Then try:
@@ -263,7 +244,7 @@ Any change made in `psql` shows up in `GET /tasks` immediately.
 
 ## Swagger UI (SQLite version)
 
-The earlier SQLite version of the service (`server.js`) serves interactive OpenAPI 3.0 documentation at `http://localhost:3000/docs`, generated from the hand-written `openapi.json`. Every endpoint has a "Try it out" button, so the full create, read, update, delete cycle can be run without curl.
+The earlier SQLite version of the service (`server.js`) serves interactive OpenAPI 3.0 documentation at `http://localhost:3000/docs`, generated from the hand-written `openapi.json`. Every endpoint has a "Try it out" button, so the full create, read, update, delete cycle can be run without curl. See [how to run it](#running-the-sqlite-version-without-docker).
 
 ![Swagger UI showing the five task endpoints](ScreenShots/Swagger%20Front%20Page.JPG)
 
@@ -278,39 +259,27 @@ The earlier SQLite version of the service (`server.js`) serves interactive OpenA
 | Delete a task | ![Delete task](ScreenShots/Delete%20Task.JPG) |
 | Task deleted | ![Task deleted](ScreenShots/Task%20Deleted.JPG) |
 
-The PostgreSQL version (`index.js`) exposes the same five task endpoints but does not mount `/docs` yet.
+The PostgreSQL version (`index.js`, the one the Docker stack runs) exposes the same five task endpoints but does not serve `/docs`.
 
 ---
 
-## Running without Docker
+## Running the SQLite version without Docker
 
-### Option A: SQLite version (with Swagger UI)
+This is the earlier milestone, kept in the repo. It needs Node.js 18 or newer. SQLite is a single file, so no database install is required.
 
-Needs Node.js 18 or newer. No database install is required, because SQLite is a single file created on first run.
+Stop the Docker stack first (`docker compose down`), because both versions use port 3000. Then:
 
 ```bash
 npm install
-npm run start:sqlite
+npm install --no-save better-sqlite3 swagger-ui-express
+node server.js
 ```
+
+The second command installs the two packages that only this version needs. `--no-save` keeps `package.json` unchanged.
 
 - API: `http://localhost:3000`
 - Swagger UI: `http://localhost:3000/docs`
-- Data file: `tasks.db`, created on first run with the `tasks` table and three seeded tasks. Delete it to reset (it is git-ignored).
-
-### Option B: PostgreSQL version on your machine, database in Docker
-
-Start only the database, publishing its port to your own machine (and nothing else) with the dev override file:
-
-```bash
-docker compose -f compose.yaml -f compose.dev.yaml up -d db
-```
-
-Make sure the `DATABASE_URL` line in your `.env` points at `localhost` and uses your password, then:
-
-```bash
-npm install
-npm start
-```
+- Data file: `tasks.db`, created next to `database.js` on first run with the `tasks` table and three seeded tasks. Delete it to reset. It is not git-ignored yet, so do not commit it.
 
 ---
 
@@ -323,13 +292,12 @@ task-management-api/
 ├── server.js           # SQLite entry point: Express routes + Swagger UI
 ├── database.js         # SQLite storage module: WAL mode, transactional seed
 ├── openapi.json        # OpenAPI 3.0 spec served at /docs by server.js
-├── Dockerfile          # API image (node:22-alpine, unprivileged user)
-├── compose.yaml        # api + db services, health check, taskdata volume
-├── compose.dev.yaml    # Optional override: publishes the DB port on localhost only
+├── Dockerfile          # API image (node:18-alpine)
+├── compose.yaml        # api + db services and the taskdata volume
 ├── ScreenShots/        # Swagger UI screenshots used in this README
-├── .env.example        # Template for required environment variables
-├── .dockerignore       # Keeps secrets and local files out of the image
-├── .gitignore          # Keeps .env, node_modules and database files out of git
+├── .env.example        # Variable names for running outside Docker
+├── .dockerignore       # Keeps .env and local files out of the image
+├── .gitignore          # Keeps .env and node_modules out of git
 ├── package.json
 └── package-lock.json
 ```
@@ -338,13 +306,13 @@ task-management-api/
 
 ## How it evolved
 
-The same five endpoints were kept stable while the storage underneath changed three times. This is the core migration skill: the API is the promise, and the database is just the filing cabinet behind it.
+The same five endpoints were kept stable while the storage underneath changed twice. This is the core migration skill: the API is the promise, and the database is just the filing cabinet behind it.
 
 | Phase | Where tasks live | What was built |
 |-------|------------------|----------------|
 | 1. In-memory API | A JavaScript array | Express server, `GET /` and `GET /health`, read endpoints with JSON `404`, `POST` with validation, `PUT` and `DELETE`, OpenAPI 3.0 spec and Swagger UI |
-| 2. SQLite | A `tasks.db` file on disk | Table created automatically, seed-once logic, every endpoint rewritten as a parameterized SQL query, data survives restarts |
-| 3. PostgreSQL in Docker | Rows in a Postgres 16 container | Connection pool, `RETURNING *` queries, `Dockerfile` and `compose.yaml`, named volume, secrets moved into `.env` |
+| 2. SQLite | A `tasks.db` file on disk | Table created automatically, seed-once logic in a transaction, every endpoint rewritten as a parameterized SQL query, data survives restarts |
+| 3. PostgreSQL in Docker | Rows in a Postgres 16 container | Connection pool, `RETURNING *` queries, `Dockerfile` and `compose.yaml`, named volume |
 
 The git history follows these phases commit by commit.
 
@@ -353,29 +321,34 @@ The git history follows these phases commit by commit.
 ## Design decisions
 
 - **Parameterized queries everywhere.** Values travel separately from the SQL text (`$1` in Postgres, `?` in SQLite), so user input is always treated as data.
-- **Validate at the edge.** Bad ids and empty titles are rejected with a `400` before any query runs.
-- **Defensive body handling.** A request with no body and no `Content-Type` once crashed a handler with a `500` and an HTML stack trace that leaked file paths. The SQLite version now falls back to an empty object so malformed requests get a clean JSON `400`.
+- **Validate at the edge.** Non-numeric ids and empty titles are rejected with a `400` before any query runs.
 - **Idempotent startup.** The table is created with `CREATE TABLE IF NOT EXISTS`, and the seed runs only when `COUNT(*)` is `0`, so restarts never duplicate data.
-- **Ordered startup.** The API waits for the database health check, then `index.js` awaits schema setup before opening its port, and exits loudly if the database is unreachable.
+- **Schema before traffic.** `index.js` awaits schema setup before opening its port, and exits with an error if the database is unreachable.
 - **Connection pooling.** Postgres connections are expensive to open, so `pg.Pool` keeps a few warm and lends them per query.
 - **`RETURNING *`.** `INSERT`, `UPDATE` and `DELETE` return the affected row in the same round trip, which gives the generated `id` and a reliable `404` check without a second query.
-- **One source for credentials.** Compose builds the connection string from the same `POSTGRES_*` values that create the database, and `.env` is excluded from git and from the image.
+- **Defensive body handling in the SQLite version.** A request with no body once crashed a handler with a `500`. `server.js` now falls back to an empty object so malformed requests get a clean JSON `400`.
 - **Consistent contracts.** Errors are always `{ "error": "..." }`, and the same status codes hold across all three storage engines.
 
 ---
 
 ## Current limitations
 
-- The PostgreSQL version does not yet serve Swagger UI, `GET /`, or `GET /health`. Those live in the earlier version.
-- `PUT` replaces the title and done flag together rather than patching a single field.
+Documented honestly, so nobody is surprised:
+
+- **A request with no body at all** (no `Content-Type` and no data) sent to `POST /tasks` or `PUT /tasks/:id` on the PostgreSQL version returns a `500` instead of a `400`. Sending `{}` with the JSON header correctly returns `400`. The SQLite version already handles this case.
+- **Neither version serves `GET /` or `GET /health`.** Those existed in the earliest in-memory phase only.
+- **The PostgreSQL version does not serve Swagger UI.** `/docs` exists only in the SQLite version.
+- **The database password is a development default** (`dev`), set directly in `compose.yaml`. See [Security notes](#security-notes).
+- **`depends_on` waits for the database container to start, not to be ready.** See the first-start note in [Quick start](#quick-start).
+- **`PUT` replaces the title and done flag together** rather than patching a single field.
+- **The SQLite version needs two extra packages** that are not in `package.json` (see its run instructions).
 - There is no authentication, pagination, or automated test suite yet.
-- Schema creation happens in application code at startup. There is no migration tool yet.
 
 ---
 
-## Roadmap: Supabase
+## Roadmap
 
-The next step is pointing this API at a managed PostgreSQL database on **Supabase**. Because the app already speaks standard PostgreSQL through `pg`, the core of the change is configuration rather than a rewrite. Planned work:
+**Next: connect to Supabase.** The app already speaks standard PostgreSQL through `pg`, so the core of the change is configuration rather than a rewrite. Planned work:
 
 1. Create a Supabase project and move the `tasks` schema there as a proper SQL migration instead of startup code.
 2. Point `DATABASE_URL` at the Supabase connection string, and enable TLS in the `pg` pool configuration.
@@ -383,16 +356,23 @@ The next step is pointing this API at a managed PostgreSQL database on **Supabas
 4. Keep the Docker Compose stack as the local development environment, with Supabase as the hosted one.
 5. Review Supabase's row-level security settings for the `tasks` table before exposing anything publicly.
 
+**Housekeeping planned alongside it:**
+
+- Move the database password out of `compose.yaml` into `.env`.
+- Add a database health check so the API starts only when Postgres is ready.
+- Return `400` for requests with no body.
+- Add `GET /health` and Swagger UI to the PostgreSQL version.
+- Declare every dependency in `package.json`, and git-ignore `tasks.db`.
+
 ---
 
 ## Security notes
 
-- `.env` is git-ignored and excluded from the Docker image. `.env.example` documents the required keys with placeholder values only.
 - All SQL is parameterized.
-- The API container runs as an unprivileged user.
-- The database port is not published by default. The optional `compose.dev.yaml` binds it to `127.0.0.1` only.
+- `.env` is git-ignored and excluded from the Docker image through `.dockerignore`.
+- The database port is not published to the host.
 - Errors return generic JSON messages. Internal details are logged server-side only.
-- Replace the `change_me` placeholder with a strong password before running anywhere other than your own machine.
+- **`compose.yaml` currently contains a development password (`dev`).** This stack is for local use only. Do not deploy it as-is. Moving credentials into `.env` is on the roadmap.
 - The service stores task titles only and holds no personal data.
 
 ---
